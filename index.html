@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editor Gráfico</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+        }
+        canvas {
+            border: 1px solid #000;
+            margin: 20px;
+            background-color: #fff;
+        }
+        #tools {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0px 0px 10px rgba(0,0,0,0.1);
+        }
+        #file-options {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            background-color: #f0f0f0;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0px 0px 10px rgba(0,0,0,0.1);
+        }
+        .tool {
+            margin-bottom: 10px;
+        }
+        .tool label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .tool input[type="color"] {
+            width: 30px;
+            height: 30px;
+            padding: 0;
+            margin-right: 5px;
+            vertical-align: middle;
+            border: none;
+        }
+        .tool button {
+            margin-right: 5px;
+        }
+        @media (max-width: 768px) {
+            #tools, #file-options {
+                position: static;
+                margin: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="tools">
+        <div class="tool">
+            <label for="colorPicker">Cor:</label>
+            <input type="color" id="colorPicker">
+        </div>
+        <div class="tool">
+            <label for="lineWidth">Espessura:</label>
+            <input type="number" id="lineWidth" value="2" min="1">
+        </div>
+        <div class="tool">
+            <button id="penTool">Caneta</button>
+            <button id="eraserTool">Borracha</button>
+            <button id="paintBucketTool">Balde</button>
+        </div>
+    </div>
+
+    <div id="file-options">
+        <button id="clearCanvas">Limpar</button>
+        <button id="saveCanvas">Salvar</button>
+    </div>
+
+    <canvas id="canvas" width="800" height="600"></canvas>
+
+    <script>
+        window.onload = function() {
+            var canvas = document.getElementById("canvas");
+            var ctx = canvas.getContext("2d");
+            var drawing = false;
+            var colorPicker = document.getElementById("colorPicker");
+            var lineWidth = document.getElementById("lineWidth");
+            var currentTool = "pen"; // Default tool
+
+            canvas.addEventListener("mousedown", startDraw);
+            canvas.addEventListener("mouseup", stopDraw);
+            canvas.addEventListener("mousemove", draw);
+
+            function startDraw(e) {
+                drawing = true;
+                draw(e);
+            }
+
+            function stopDraw() {
+                drawing = false;
+                ctx.beginPath();
+            }
+
+            function draw(e) {
+                if (!drawing) return;
+
+                var x = e.clientX - canvas.offsetLeft;
+                var y = e.clientY - canvas.offsetTop;
+
+                if (currentTool === "pen" || currentTool === "eraser") {
+                    ctx.lineWidth = lineWidth.value;
+                    ctx.lineCap = "round";
+                    ctx.strokeStyle = colorPicker.value;
+
+                    if (currentTool === "eraser") {
+                        ctx.globalCompositeOperation = "destination-out";
+                    } else {
+                        ctx.globalCompositeOperation = "source-over";
+                    }
+
+                    ctx.lineTo(x, y);
+                    ctx.stroke();
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                } else if (currentTool === "paintBucket") {
+                    floodFill(x, y, colorPicker.value);
+                }
+            }
+
+            function stopEvent(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+            }
+
+            function floodFill(startX, startY, fillColor) {
+                var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                var pixelStack = [[startX, startY]];
+                var startPos = (startY * canvas.width + startX) * 4;
+                var startColor = {
+                    r: imageData.data[startPos],
+                    g: imageData.data[startPos + 1],
+                    b: imageData.data[startPos + 2],
+                    a: imageData.data[startPos + 3]
+                };
+                var targetColor = {
+                    r: fillColor.hexToR(),
+                    g: fillColor.hexToG(),
+                    b: fillColor.hexToB(),
+                    a: 255
+                };
+
+                if (colorMatch(startColor, targetColor)) {
+                    return;
+                }
+
+                while (pixelStack.length) {
+                    var newPos, x, y, pixelPos, reachLeft, reachRight;
+                    newPos = pixelStack.pop();
+                    x = newPos[0];
+                    y = newPos[1];
+
+                    pixelPos = (y * canvas.width + x) * 4;
+
+                    while (y-- >= 0 && colorMatch(startColor, getPixel(imageData, x, y))) {
+                        pixelPos -= canvas.width * 4;
+                    }
+
+                    pixelPos += canvas.width * 4;
+                    ++y;
+                    reachLeft = false;
+                    reachRight = false;
+
+                    while (y++ < canvas.height - 1 && colorMatch(startColor, getPixel(imageData, x, y))) {
+                        colorPixel(imageData, x, y, targetColor);
+
+                        if (x > 0) {
+                            if (colorMatch(startColor, getPixel(imageData, x - 1, y))) {
+                                if (!reachLeft) {
+                                    pixelStack.push([x - 1, y]);
+                                    reachLeft = true;
+                                }
+                            } else if (reachLeft) {
+                                reachLeft = false;
+                            }
+                        }
+
+                        if (x < canvas.width - 1) {
+                            if (colorMatch(startColor, getPixel(imageData, x + 1, y))) {
+                                if (!reachRight) {
+                                    pixelStack.push([x + 1, y]);
+                                    reachRight = true;
+                                }
+                            } else if (reachRight) {
+                                reachRight = false;
+                            }
+                        }
+
+                        pixelPos += canvas.width * 4;
+                    }
+                }
+
+                ctx.putImageData(imageData, 0, 0);
+            }
+
+            function getPixel(imageData, x, y) {
+                if (x < 0 || y < 0 || x >= canvas.width || y >= canvas.height) {
+                    return false;
+                }
+                var pos = (y * canvas.width + x) * 4;
+                return {
+                    r: imageData.data[pos],
+                    g: imageData.data[pos + 1],
+                    b: imageData.data[pos + 2],
+                    a: imageData.data[pos + 3]
+                };
+            }
+
+            function colorMatch(color1, color2) {
+                return color1.r === color2.r && color1.g === color2.g && color1.b === color2.b && color1.a === color2.a;
+            }
+
+            function colorPixel(imageData, x, y, color) {
+                var pos = (y * canvas.width + x) * 4;
+                imageData.data[pos] = color.r;
+                imageData.data[pos + 1] = color.g;
+                imageData.data[pos + 2] = color.b;
+                imageData.data[pos + 3] = color.a;
+            }
+
+            // Utility functions for converting color codes to RGB
+            String.prototype.hexToR = function(){return parseInt(this.substr(1,2),16)};
+            String.prototype.hexToG = function(){return parseInt(this.substr(3,2),16)};
+            String.prototype.hexToB = function(){return parseInt(this.substr(5,2),16)};
+
+            document.getElementById("clearCanvas").addEventListener("click", function() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            });
+
+            document.getElementById("saveCanvas").addEventListener("click", function() {
+                var image = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
+                window.location.href = image;
+            });
+
+            document.getElementById("penTool").addEventListener("click", function() {
+                currentTool = "pen";
+            });
+
+            document.getElementById("eraserTool").addEventListener("click", function() {
+                currentTool = "eraser";
+            });
+
+            document.getElementById("paintBucketTool").addEventListener("click", function() {
+                currentTool = "paintBucket";
+            });
+
+            window.addEventListener("resize", resizeCanvas);
+
+            function resizeCanvas() {
+                canvas.width = window.innerWidth - 40;
+                canvas.height = window.innerHeight - 40;
+            }
+
+            resizeCanvas();
+        };
+    </script>
+</body>
+</html>
